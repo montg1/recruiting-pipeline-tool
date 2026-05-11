@@ -1,0 +1,8 @@
+{
+  "name": "Candidate Scraper Workflow",
+  "nodes": [],
+  "connections": {},
+  "meta": {
+    "description": "Placeholder — import into n8n and build: Webhook Trigger → HTTP Request (scrape) → Claude AI (normalize) → Webhook Response"
+  }
+}

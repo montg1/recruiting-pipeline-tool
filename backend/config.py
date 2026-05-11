@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # Google Calendar
     google_credentials_path: str = "credentials.json"
 
+    # n8n Automation
+    n8n_webhook_url: str = "http://localhost:5678/webhook"
+
     class Config:
         env_file = ".env"
 
