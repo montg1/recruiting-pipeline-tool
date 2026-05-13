@@ -33,13 +33,15 @@ from api.candidates import router as candidates_router
 
 app.include_router(candidates_router, prefix="/api/candidates", tags=["Candidates"])
 
+from api.scraper import router as scraper_router
+
+app.include_router(scraper_router, prefix="/api/scraper", tags=["Scraper (n8n)"])
+
 # Uncomment as each module is implemented:
 # from api.resumes import router as resumes_router
 # from api.interviews import router as interviews_router
-# from api.scraper_webhook import router as scraper_router
 #
 # app.include_router(resumes_router, prefix="/api/resumes", tags=["Resumes"])
 # app.include_router(interviews_router, prefix="/api/interviews", tags=["Interviews"])
-# app.include_router(scraper_router, prefix="/api/scraper", tags=["Scraper (n8n)"])
 
 
