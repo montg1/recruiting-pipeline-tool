@@ -11,9 +11,21 @@ const api = axios.create({
   },
 })
 
-export default api
+/* ---- Candidates ---- */
+export const getCandidates = (params = {}) => api.get('/candidates/', { params })
+export const getCandidate = (id) => api.get(`/candidates/${id}`)
+export const createCandidate = (data) => api.post('/candidates/', data)
+export const updateCandidate = (id, data) => api.put(`/candidates/${id}`, data)
+export const deleteCandidate = (id) => api.delete(`/candidates/${id}`)
 
-// TODO: Add specific service functions, e.g.:
-// export const getCandidates = () => api.get('/candidates')
-// export const uploadResume = (formData) => api.post('/resumes/upload', formData)
-// export const scheduleInterview = (data) => api.post('/interviews', data)
+/* ---- Applications ---- */
+export const createApplication = (candidateId, data) =>
+  api.post(`/candidates/${candidateId}/applications`, data)
+
+export const updateApplicationStage = (candidateId, appId, data) =>
+  api.patch(`/candidates/${candidateId}/applications/${appId}/stage`, data)
+
+/* ---- Pipeline Stages ---- */
+export const getStages = () => api.get('/candidates/stages')
+
+export default api

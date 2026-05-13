@@ -1,1 +1,123 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
+
+/* ============================================================
+   H+ Hotel Plus — Recruiting Pipeline Theme
+   Primary: Golden Amber #F5C518 / #EAB308
+   Dark Navy: #1A2332 / #1E293B
+   ============================================================ */
+
+@theme {
+  --color-hplus-gold: #F5C518;
+  --color-hplus-gold-light: #FDE68A;
+  --color-hplus-gold-dark: #CA8A04;
+  --color-hplus-navy: #1A2332;
+  --color-hplus-navy-light: #1E293B;
+  --color-hplus-navy-lighter: #334155;
+  --color-hplus-surface: #F8FAFC;
+  --color-hplus-card: #FFFFFF;
+  --color-hplus-border: #E2E8F0;
+  --color-hplus-text: #0F172A;
+  --color-hplus-text-muted: #64748B;
+
+  /* Stage colors */
+  --color-stage-applied: #3B82F6;
+  --color-stage-screening: #8B5CF6;
+  --color-stage-prescreencall: #EC4899;
+  --color-stage-firstinterview: #F97316;
+  --color-stage-offer: #14B8A6;
+  --color-stage-hired: #22C55E;
+  --color-stage-rejected: #EF4444;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-hplus-surface);
+    color: var(--color-hplus-text);
+  }
+
+  /* Scrollbar styling for kanban columns */
+  .kanban-col::-webkit-scrollbar {
+    width: 4px;
+  }
+  .kanban-col::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .kanban-col::-webkit-scrollbar-thumb {
+    background: var(--color-hplus-border);
+    border-radius: 999px;
+  }
+}
+
+/* ============================================================
+   Drag-and-drop visual feedback
+   ============================================================ */
+.drag-ghost {
+  opacity: 0.4;
+  transform: rotate(2deg);
+}
+
+.drag-over {
+  outline: 2px dashed var(--color-hplus-gold);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--color-hplus-gold) 6%, transparent) !important;
+}
+
+/* Card being dragged */
+[draggable="true"] {
+  cursor: grab;
+}
+[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* ============================================================
+   Transitions & Animations
+   ============================================================ */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.25s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.slide-up-enter-active {
+  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.slide-up-leave-active {
+  transition: all 0.2s ease;
+}
+.slide-up-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* Pulse animation for loading dots */
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.pulse-dot:nth-child(2) { animation-delay: 0.16s; }
+.pulse-dot:nth-child(3) { animation-delay: 0.32s; }

@@ -35,3 +35,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Internal test/design docs
+test/
+
+# Temp files
+theme_page_*.png
