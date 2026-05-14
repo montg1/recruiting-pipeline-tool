@@ -67,12 +67,19 @@ export const usePipelineStore = defineStore('pipeline', () => {
     }
   }
 
-  async function fetchCandidates() {
+  async function fetchCandidates(filters = {}) {
     loading.value = true
     error.value = null
     try {
+      // Build query params — only include non-empty values
+      const params = {}
+      if (filters.job_id) params.job_id = filters.job_id
+      if (filters.stage_id) params.stage_id = filters.stage_id
+      if (filters.source) params.source = filters.source
+      if (filters.search) params.search = filters.search
+
       // First fetch list, then get detail (with applications) for each
-      const { data: list } = await getCandidates()
+      const { data: list } = await getCandidates(params)
       // Fetch details with applications in parallel
       const details = await Promise.all(
         list.map((c) => getCandidate(c.id).then((r) => r.data))

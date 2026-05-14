@@ -5,12 +5,12 @@
  * Displays pipeline columns with draggable candidate cards.
  * Fetches data via Pinia store; calls PATCH endpoint on drop.
  */
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { usePipelineStore } from '@/stores/pipeline'
 import CandidateCard from '@/components/CandidateCard.vue'
 import AddCandidateModal from '@/components/AddCandidateModal.vue'
 import CandidateModal from '@/components/CandidateModal.vue'
-import { updateCandidate, deleteCandidate } from '@/services/api'
+import { updateCandidate, deleteCandidate, getJobs } from '@/services/api'
 
 const store = usePipelineStore()
 const showAddModal = ref(false)
@@ -18,9 +18,43 @@ const selectedCandidate = ref(null)
 const showCandidateModal = ref(false)
 const dragOverStageId = ref(null)
 const notification = ref(null)
+const showFilters = ref(false)
 
-onMounted(() => {
+/* ---- Filters ---- */
+const filters = ref({
+  job_id: '',
+  stage_id: '',
+  source: '',
+  search: '',
+})
+const jobs = ref([])
+const sources = ['LinkedIn', 'Referral', 'Job Board', 'n8n_scrape', 'AI Resume Screen', 'Website', 'Other']
+
+const hasActiveFilters = computed(() => {
+  return filters.value.job_id || filters.value.stage_id || filters.value.source || filters.value.search
+})
+
+function clearFilters() {
+  filters.value = { job_id: '', stage_id: '', source: '', search: '' }
+}
+
+// Debounced auto-apply
+let filterTimeout = null
+watch(filters, () => {
+  clearTimeout(filterTimeout)
+  filterTimeout = setTimeout(() => {
+    store.fetchCandidates(filters.value)
+  }, 300)
+}, { deep: true })
+
+onMounted(async () => {
   store.init()
+  try {
+    const { data } = await getJobs()
+    jobs.value = Array.isArray(data) ? data : []
+  } catch {
+    jobs.value = []
+  }
 })
 
 /* ---- Stage colors for column headers ---- */
@@ -158,7 +192,7 @@ async function handleDeleteCandidate(id) {
             </p>
           </div>
 
-          <div class="flex items-center gap-4">
+          <div class="flex items-center gap-3">
             <!-- Stats pills -->
             <div class="hidden md:flex items-center gap-2">
               <div class="px-3 py-1.5 rounded-full bg-hplus-gold/10 border border-hplus-gold/20">
@@ -172,6 +206,23 @@ async function handleDeleteCandidate(id) {
                 </span>
               </div>
             </div>
+
+            <!-- Filter toggle -->
+            <button
+              @click="showFilters = !showFilters"
+              class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+              :class="showFilters || hasActiveFilters
+                ? 'bg-hplus-navy text-white shadow-sm'
+                : 'text-slate-500 hover:bg-slate-100'"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>
+              </svg>
+              Filters
+              <span v-if="hasActiveFilters"
+                    class="w-2 h-2 rounded-full bg-hplus-gold animate-pulse"></span>
+            </button>
 
             <!-- Add button -->
             <button
@@ -191,6 +242,71 @@ async function handleDeleteCandidate(id) {
           </div>
         </div>
       </div>
+
+      <!-- ===== Filter Bar ===== -->
+      <Transition name="slide-down">
+        <div v-if="showFilters" class="border-t border-hplus-border bg-slate-50/80 px-4 sm:px-6 lg:px-8 py-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <!-- Search -->
+            <div class="relative flex-1 min-w-[180px] max-w-xs">
+              <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <input
+                v-model="filters.search"
+                type="text"
+                placeholder="Search name or email..."
+                class="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-200 bg-white text-sm
+                       placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-hplus-gold/40
+                       focus:border-hplus-gold transition"
+              />
+            </div>
+
+            <!-- Job filter -->
+            <select
+              v-model="filters.job_id"
+              class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-hplus-text
+                     focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition min-w-[160px]"
+            >
+              <option value="">All Jobs</option>
+              <option v-for="job in jobs" :key="job.id" :value="job.id">{{ job.title }}</option>
+            </select>
+
+            <!-- Stage filter -->
+            <select
+              v-model="filters.stage_id"
+              class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-hplus-text
+                     focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition min-w-[160px]"
+            >
+              <option value="">All Stages</option>
+              <option v-for="stage in store.stages" :key="stage.id" :value="stage.id">{{ stage.name }}</option>
+            </select>
+
+            <!-- Source filter -->
+            <select
+              v-model="filters.source"
+              class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-hplus-text
+                     focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition min-w-[140px]"
+            >
+              <option value="">All Sources</option>
+              <option v-for="s in sources" :key="s" :value="s">{{ s }}</option>
+            </select>
+
+            <!-- Clear button -->
+            <button
+              v-if="hasActiveFilters"
+              @click="clearFilters"
+              class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+                     text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+              Clear
+            </button>
+          </div>
+        </div>
+      </Transition>
     </div>
 
     <!-- Loading State -->
