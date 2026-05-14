@@ -18,6 +18,11 @@ const router = createRouter({
       name: 'upload',
       component: () => import('@/views/UploadView.vue'),
     },
+    {
+      path: '/scraper',
+      name: 'scraper',
+      component: () => import('@/views/ScraperView.vue'),
+    },
   ],
 })
 

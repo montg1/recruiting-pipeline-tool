@@ -50,6 +50,20 @@ import { RouterLink, RouterView } from 'vue-router'
                   Upload Resume
                 </span>
               </RouterLink>
+              <RouterLink
+                to="/scraper"
+                class="px-3 py-2 rounded-lg text-sm font-medium text-slate-300
+                       hover:text-white hover:bg-white/10 transition-all duration-200"
+                active-class="!text-hplus-gold !bg-hplus-gold/10"
+              >
+                <span class="flex items-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  Scraper
+                </span>
+              </RouterLink>
             </div>
           </div>
 

@@ -28,4 +28,8 @@ export const updateApplicationStage = (candidateId, appId, data) =>
 /* ---- Pipeline Stages ---- */
 export const getStages = () => api.get('/candidates/stages')
 
+/* ---- Scraper (Module 1) ---- */
+export const extractCandidate = (inputType, payload) =>
+  api.post('/scraper/extract', { input_type: inputType, payload })
+
 export default api
