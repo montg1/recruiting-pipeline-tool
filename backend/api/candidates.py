@@ -87,12 +87,21 @@ def list_candidates(
     source: Optional[str] = Query(None, description="Filter by source (e.g. LinkedIn, Referral)"),
     search: Optional[str] = Query(None, description="Search by name or email (case-insensitive)"),
     is_active: bool = Query(True, description="Filter by active status"),
+    job_id: Optional[int] = Query(None, description="Filter by job ID (via applications)"),
+    stage_id: Optional[int] = Query(None, description="Filter by pipeline stage ID (via applications)"),
     # --- pagination ---
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    """List candidates with optional filtering and pagination."""
+    """List candidates with optional filtering and pagination.
+
+    Supports filtering by:
+    - source: candidate's recruitment source
+    - search: case-insensitive name/email search
+    - job_id: only candidates who have an application for this job
+    - stage_id: only candidates who have an application in this pipeline stage
+    """
     query = db.query(Candidate).filter(Candidate.is_active == is_active)
 
     if source:
@@ -103,6 +112,16 @@ def list_candidates(
             sa_func.lower(Candidate.full_name).like(sa_func.lower(pattern))
             | sa_func.lower(Candidate.email).like(sa_func.lower(pattern))
         )
+
+    # Filter via application relationships (join only when needed)
+    if job_id is not None or stage_id is not None:
+        query = query.join(Application, Application.candidate_id == Candidate.id)
+        if job_id is not None:
+            query = query.filter(Application.job_id == job_id)
+        if stage_id is not None:
+            query = query.filter(Application.current_stage_id == stage_id)
+        # Avoid duplicate rows when a candidate has multiple matching applications
+        query = query.distinct()
 
     query = query.order_by(Candidate.created_at.desc())
     return query.offset(skip).limit(limit).all()
