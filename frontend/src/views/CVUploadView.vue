@@ -5,7 +5,7 @@
  */
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { screenResume, getJobs, createCandidate, createApplication } from '@/services/api'
+import { screenResume, getJobs, getCandidates, updateCandidate, createCandidate, createApplication } from '@/services/api'
 import ScoreCard from '@/components/ScoreCard.vue'
 
 const router = useRouter()
@@ -96,39 +96,68 @@ async function handleScreen() {
   }
 }
 
-/* ---- Save candidate to pipeline ---- */
-async function handleSaveToPipeline() {
-  if (!result.value) return
-  saving.value = true
+/* ---- Candidate Selection Modal ---- */
+const showCandidateModal = ref(false)
+const candidatesList = ref([])
+const selectedCandidateId = ref('')
+const candidateSearch = ref('')
+const loadingCandidates = ref(false)
+const attaching = ref(false)
+
+const filteredCandidates = computed(() => {
+  if (!candidateSearch.value) return candidatesList.value
+  const q = candidateSearch.value.toLowerCase()
+  return candidatesList.value.filter(c =>
+    c.full_name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
+  )
+})
+
+async function openCandidateModal() {
+  showCandidateModal.value = true
+  loadingCandidates.value = true
+  selectedCandidateId.value = ''
+  candidateSearch.value = ''
+  try {
+    const { data } = await getCandidates()
+    candidatesList.value = Array.isArray(data) ? data : []
+  } catch {
+    candidatesList.value = []
+  } finally {
+    loadingCandidates.value = false
+  }
+}
+
+async function handleAttachScore() {
+  if (!selectedCandidateId.value || !result.value) return
+  attaching.value = true
   error.value = null
 
   try {
     const ev = result.value.evaluation
     const scores = Array.isArray(ev) && ev[0]?.output ? ev[0].output : ev
 
-    const candidatePayload = {
-      full_name: selectedFile.value.name.replace('.pdf', '').replace(/_/g, ' '),
-      email: `candidate-${Date.now()}@pipeline.local`,
-      source: 'AI Resume Screen',
+    // Update the selected candidate with AI evaluation data
+    await updateCandidate(selectedCandidateId.value, {
       parsed_data: {
         ai_evaluation: scores,
         resume_filename: result.value.resume_filename,
         job_matched: result.value.job_title,
       },
-    }
+    })
 
-    const { data: candidate } = await createCandidate(candidatePayload)
-
+    // Ensure the candidate has an application for this job
     try {
-      await createApplication(candidate.id, { job_id: Number(selectedJobId.value) })
-    } catch (_) { /* job may not exist */ }
+      await createApplication(selectedCandidateId.value, { job_id: Number(selectedJobId.value) })
+    } catch (_) { /* application may already exist */ }
 
-    showNotification('Candidate added to pipeline with AI insights!')
+    showCandidateModal.value = false
+    const candidate = candidatesList.value.find(c => c.id == selectedCandidateId.value)
+    showNotification(`AI score attached to ${candidate?.full_name || 'candidate'}!`)
     setTimeout(() => router.push('/'), 1500)
   } catch (e) {
-    error.value = e?.response?.data?.detail || 'Failed to save candidate.'
+    error.value = e?.response?.data?.detail || 'Failed to attach score.'
   } finally {
-    saving.value = false
+    attaching.value = false
   }
 }
 
@@ -291,31 +320,121 @@ function showNotification(msg) {
                              hover:bg-slate-200 transition-all duration-200">
                 Screen Another CV
               </button>
-              <button @click="handleSaveToPipeline" :disabled="saving"
+              <button @click="openCandidateModal"
                       class="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold
                              bg-hplus-gold text-hplus-navy shadow-md shadow-hplus-gold/25
                              hover:bg-amber-400 hover:shadow-lg active:scale-[0.98]
-                             disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200">
-                <template v-if="saving">
-                  <div class="flex gap-1.5">
-                    <div class="w-2 h-2 rounded-full bg-hplus-navy/60 animate-bounce"></div>
-                    <div class="w-2 h-2 rounded-full bg-hplus-navy/60 animate-bounce" style="animation-delay: 150ms"></div>
-                    <div class="w-2 h-2 rounded-full bg-hplus-navy/60 animate-bounce" style="animation-delay: 300ms"></div>
-                  </div>
-                  Saving...
-                </template>
-                <template v-else>
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                  </svg>
-                  Add Candidate to Pipeline
-                </template>
+                             transition-all duration-200">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+                </svg>
+                Attach Score to Candidate
               </button>
             </div>
           </div>
         </div>
       </Transition>
     </div>
+
+    <!-- ===== Select Candidate Modal ===== -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="showCandidateModal" class="fixed inset-0 z-50 flex items-center justify-center">
+          <!-- Backdrop -->
+          <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showCandidateModal = false" />
+
+          <!-- Modal -->
+          <div class="relative w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl
+                      animate-[scaleIn_0.2s_ease] overflow-hidden">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-hplus-border">
+              <div>
+                <h3 class="text-base font-bold text-hplus-text">Select Candidate</h3>
+                <p class="text-xs text-hplus-text-muted mt-0.5">Choose which candidate to attach this AI score to</p>
+              </div>
+              <button @click="showCandidateModal = false" class="p-1.5 rounded-lg hover:bg-slate-100 transition">
+                <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Search -->
+            <div class="px-6 pt-4">
+              <div class="relative">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+                <input v-model="candidateSearch" type="text" placeholder="Search by name or email..."
+                       class="w-full pl-9 pr-3 py-2.5 rounded-lg border border-hplus-border bg-hplus-surface text-sm
+                              placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-hplus-gold/40
+                              focus:border-hplus-gold transition" />
+              </div>
+            </div>
+
+            <!-- Candidate list -->
+            <div class="px-6 py-3 max-h-64 overflow-y-auto space-y-1">
+              <div v-if="loadingCandidates" class="flex items-center justify-center py-8">
+                <div class="flex gap-1.5">
+                  <div class="w-2 h-2 rounded-full bg-hplus-gold animate-bounce"></div>
+                  <div class="w-2 h-2 rounded-full bg-hplus-gold animate-bounce" style="animation-delay: 150ms"></div>
+                  <div class="w-2 h-2 rounded-full bg-hplus-gold animate-bounce" style="animation-delay: 300ms"></div>
+                </div>
+              </div>
+
+              <div v-else-if="filteredCandidates.length === 0" class="text-center py-8">
+                <p class="text-sm text-slate-400">No candidates found</p>
+              </div>
+
+              <label v-else v-for="c in filteredCandidates" :key="c.id"
+                     class="flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all duration-150"
+                     :class="selectedCandidateId == c.id
+                       ? 'bg-hplus-gold/10 border border-hplus-gold/30'
+                       : 'hover:bg-slate-50 border border-transparent'">
+                <input type="radio" name="candidate" :value="c.id" v-model="selectedCandidateId" class="sr-only" />
+                <div class="w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center
+                            bg-gradient-to-br from-hplus-gold to-amber-500 text-hplus-navy text-xs font-bold">
+                  {{ c.full_name?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-hplus-text truncate">{{ c.full_name }}</p>
+                  <p class="text-xs text-hplus-text-muted truncate">{{ c.email }}</p>
+                </div>
+                <div v-if="selectedCandidateId == c.id"
+                     class="w-5 h-5 rounded-full bg-hplus-gold flex items-center justify-center flex-shrink-0">
+                  <svg class="w-3 h-3 text-hplus-navy" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                  </svg>
+                </div>
+              </label>
+            </div>
+
+            <!-- Footer -->
+            <div class="px-6 py-4 border-t border-hplus-border bg-slate-50 flex items-center justify-end gap-3">
+              <button @click="showCandidateModal = false"
+                      class="px-4 py-2 rounded-lg text-sm font-medium text-hplus-text-muted hover:bg-slate-200 transition">
+                Cancel
+              </button>
+              <button @click="handleAttachScore" :disabled="!selectedCandidateId || attaching"
+                      class="px-5 py-2.5 rounded-lg text-sm font-semibold
+                             bg-hplus-gold text-hplus-navy shadow-md
+                             hover:bg-amber-400 hover:shadow-lg
+                             disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200">
+                <span v-if="attaching" class="flex items-center gap-2">
+                  <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  Attaching...
+                </span>
+                <span v-else>Confirm & Attach Score</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- Toast -->
     <Transition name="fade">
