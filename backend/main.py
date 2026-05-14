@@ -38,10 +38,11 @@ from api.scraper import router as scraper_router
 app.include_router(scraper_router, prefix="/api/scraper", tags=["Scraper (n8n)"])
 
 # Uncomment as each module is implemented:
-# from api.resumes import router as resumes_router
+from api.resumes import router as resumes_router
+
+app.include_router(resumes_router, prefix="/api/resumes", tags=["Resumes (AI Screener)"])
+
 # from api.interviews import router as interviews_router
-#
-# app.include_router(resumes_router, prefix="/api/resumes", tags=["Resumes"])
 # app.include_router(interviews_router, prefix="/api/interviews", tags=["Interviews"])
 
 
