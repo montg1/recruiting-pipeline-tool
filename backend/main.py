@@ -11,10 +11,13 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS — allow Vue dev server
+# CORS — allow Vue dev server and Vercel production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://frontend-sigma-seven-85.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
