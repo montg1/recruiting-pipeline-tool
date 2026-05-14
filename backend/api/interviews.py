@@ -190,8 +190,8 @@ async def schedule_interview(payload: InterviewCreate, db: Session = Depends(get
         scheduled_at=payload.scheduled_at,
         duration_minutes=payload.duration_minutes,
         interviewer_id=payload.interviewer_id,
-        google_meet_link=n8n_result.get("google_meet_link"),
-        google_event_id=n8n_result.get("google_event_id"),
+        google_meet_link=n8n_result.get("hangoutLink") or n8n_result.get("google_meet_link"),
+        google_event_id=n8n_result.get("id") or n8n_result.get("google_event_id"),
         status="scheduled",
     )
     db.add(interview)
@@ -311,7 +311,10 @@ async def update_interview(
             "scheduled_at": new_start.isoformat(),
             "duration_minutes": new_duration,
         }
-        await _call_n8n_interview_webhook("update", n8n_payload)
+        n8n_result = await _call_n8n_interview_webhook("update", n8n_payload)
+        new_link = n8n_result.get("hangoutLink") or n8n_result.get("google_meet_link")
+        if new_link:
+            interview.google_meet_link = new_link
 
     # --- Apply updates ---
     if payload.scheduled_at:
