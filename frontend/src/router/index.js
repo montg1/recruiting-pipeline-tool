@@ -13,12 +13,7 @@ const router = createRouter({
       name: 'candidate-detail',
       component: () => import('@/views/CandidateDetailView.vue'),
     },
-    {
-      path: '/upload',
-      name: 'upload',
-      component: () => import('@/views/UploadView.vue'),
-    },
-    {
+{
       path: '/scraper',
       name: 'scraper',
       component: () => import('@/views/ScraperView.vue'),
