@@ -59,6 +59,19 @@ function formatDate(dateStr) {
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
+
+function formatRelative(dateStr) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const now = new Date()
+  const diffMs = d - now
+  const diffDays = Math.floor(diffMs / 86400000)
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  if (diffDays < 0) return `${formatDate(dateStr)} ${time}`
+  if (diffDays === 0) return `Today ${time}`
+  if (diffDays === 1) return `Tomorrow ${time}`
+  return `${formatDate(dateStr)} ${time}`
+}
 </script>
 
 <template>
@@ -127,6 +140,31 @@ function formatDate(dateStr) {
       <p class="text-[10px] text-red-600 leading-relaxed line-clamp-2">
         {{ application.rejected_reason }}
       </p>
+    </div>
+
+    <!-- Interview / Google Meet -->
+    <div v-if="application.next_interview_at" class="mt-2">
+      <a v-if="application.google_meet_link"
+         :href="application.google_meet_link" target="_blank" rel="noopener"
+         @click.stop
+         class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg
+                bg-blue-50 border border-blue-200
+                hover:bg-blue-100 hover:border-blue-300
+                transition-all duration-150 group/meet">
+        <svg class="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+        </svg>
+        <span class="text-[10px] font-semibold text-blue-600 group-hover/meet:text-blue-700">Join Meeting</span>
+        <span class="ml-auto text-[9px] text-blue-400 font-medium">{{ formatRelative(application.next_interview_at) }}</span>
+      </a>
+      <div v-else class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-violet-50 border border-violet-200">
+        <svg class="w-3.5 h-3.5 text-violet-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+        </svg>
+        <span class="text-[10px] font-medium text-violet-600">{{ formatRelative(application.next_interview_at) }}</span>
+      </div>
     </div>
   </div>
 </template>
