@@ -35,93 +35,44 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     return full_text
 
 
-# ---------- Claude AI Scoring ----------
-SCORING_PROMPT = """You are an expert HR recruiter and resume screener.
-
-**Job Title:** {job_title}
-
-**Job Description:**
-{job_description}
-
-**Job Requirements:**
-{job_requirements}
-
-**Candidate Resume Text:**
-{resume_text}
-
----
-
-Evaluate this candidate for the job above. You MUST return ONLY valid JSON (no markdown, no explanation outside JSON). Use this exact schema:
-
-{{
-  "skills_score": <number 0-10>,
-  "experience_score": <number 0-10>,
-  "culture_score": <number 0-10>,
-  "overall_score": <number 0-10>,
-  "reasoning": "<2-4 sentence summary of your evaluation>",
-  "strengths": ["<strength 1>", "<strength 2>"],
-  "weaknesses": ["<weakness 1>", "<weakness 2>"],
-  "prescreen_questions": [
-    "<question 1 to ask in phone screen>",
-    "<question 2>",
-    "<question 3>"
-  ]
-}}
-
-Scoring guide:
-- skills_score: How well do the candidate's technical skills match the requirements?
-- experience_score: How relevant is their work experience to this role?
-- culture_score: Based on communication style, interests, and overall presentation.
-- overall_score: Weighted average (skills 40%, experience 40%, culture 20%).
-
-Return ONLY the JSON object. No markdown fences, no extra text."""
+# ---------- Claude AI Scoring via n8n ----------
 
 
-async def score_resume_with_claude(
+async def score_resume_with_n8n(
     resume_text: str,
     job_title: str,
     job_description: str,
     job_requirements: str,
 ) -> dict:
-    """Call Claude API to score the resume against the job description."""
-    import anthropic
+    """Send extracted resume text and job details to n8n webhook for Claude scoring."""
+    import httpx
 
-    if not settings.anthropic_api_key:
+    webhook_url = settings.n8n_webhook_url
+    if not webhook_url:
         raise HTTPException(
             status_code=500,
-            detail="ANTHROPIC_API_KEY is not configured."
+            detail="N8N_WEBHOOK_URL is not configured."
         )
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    payload = {
+        "type": "resume_screen",
+        "job_title": job_title,
+        "job_description": job_description or "Not provided",
+        "job_requirements": job_requirements or "Not provided",
+        "resume_text": resume_text[:8000] # Limit to avoid massive payloads
+    }
 
-    prompt = SCORING_PROMPT.format(
-        job_title=job_title,
-        job_description=job_description or "Not provided",
-        job_requirements=job_requirements or "Not provided",
-        resume_text=resume_text[:8000],  # Limit to avoid token overflow
-    )
-
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    raw_response = message.content[0].text.strip()
-
-    # Parse the JSON response from Claude
     try:
-        return json.loads(raw_response)
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(webhook_url, json=payload)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"n8n webhook error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to connect to n8n webhook: {str(e)}")
     except json.JSONDecodeError:
-        # Try to extract JSON from markdown fences if Claude wrapped it
-        import re
-        match = re.search(r'\{[\s\S]*\}', raw_response)
-        if match:
-            return json.loads(match.group())
-        raise HTTPException(
-            status_code=500,
-            detail=f"Claude returned invalid JSON: {raw_response[:300]}"
-        )
+        raise HTTPException(status_code=500, detail="n8n returned invalid JSON.")
 
 
 # ---------- API Endpoint ----------
@@ -153,16 +104,18 @@ async def screen_resume(
         resume_text = extract_text_from_pdf(file_bytes)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    except Exception:
-        raise HTTPException(status_code=422, detail="Failed to parse the PDF file.")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=422, detail=f"Failed to parse the PDF file: {str(e)}")
 
     # Fetch job from DB
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job with id {job_id} not found.")
 
-    # Call Claude
-    evaluation = await score_resume_with_claude(
+    # Call n8n webhook
+    evaluation = await score_resume_with_n8n(
         resume_text=resume_text,
         job_title=job.title,
         job_description=job.description,
