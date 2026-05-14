@@ -83,7 +83,7 @@ function overallBg(val) {
                :class="item.score >= 7 ? 'bg-emerald-500' : item.score >= 5 ? 'bg-amber-500' : 'bg-red-400'"
                :style="{ width: `${(item.score / 10) * 100}%` }"></div>
         </div>
-        <p v-if="item.reasoning" class="text-xs text-slate-600 leading-relaxed line-clamp-4">{{ item.reasoning }}</p>
+        <p v-if="item.reasoning" class="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{{ item.reasoning }}</p>
       </div>
     </div>
 
