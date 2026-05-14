@@ -1,142 +1,98 @@
 <script setup>
-/**
- * CandidateModal.vue — Slide-over panel for viewing, editing, and deleting a candidate.
- *
- * View Mode: Displays all candidate details, stage, source, and AI Resume Scores.
- * Edit Mode: Toggled via 'Edit' button — lets HR update Name, Email, Phone.
- * Delete:    Red button with native confirm dialog before emitting delete event.
- */
 import { ref, watch, computed } from 'vue'
+import { getInterviews, createInterview, updateInterview, cancelInterview } from '@/services/api'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
   candidate: { type: Object, default: null },
 })
-
 const emit = defineEmits(['close', 'update', 'delete'])
 
-/* ---- State ---- */
 const editing = ref(false)
 const saving = ref(false)
 const errorMsg = ref('')
 const form = ref({ full_name: '', email: '', phone: '' })
 
-/* ---- Reset when modal opens ---- */
-watch(
-  () => props.show,
-  (val) => {
-    if (val && props.candidate) {
-      form.value = {
-        full_name: props.candidate.full_name || '',
-        email: props.candidate.email || '',
-        phone: props.candidate.phone || '',
-      }
-      editing.value = false
-      errorMsg.value = ''
-    }
-  }
-)
+/* ---- Interview state ---- */
+const showInterviewForm = ref(false)
+const interviews = ref([])
+const loadingInterviews = ref(false)
+const submittingInterview = ref(false)
+const rescheduleId = ref(null)
+const interviewForm = ref({ scheduled_at: '', duration_minutes: 30, interviewer_id: '' })
 
-/* ---- Computed helpers ---- */
+watch(() => props.show, async (val) => {
+  if (val && props.candidate) {
+    form.value = { full_name: props.candidate.full_name || '', email: props.candidate.email || '', phone: props.candidate.phone || '' }
+    editing.value = false
+    errorMsg.value = ''
+    showInterviewForm.value = false
+    rescheduleId.value = null
+    await loadInterviews()
+  }
+})
+
+async function loadInterviews() {
+  const app = currentApp.value
+  if (!app) return
+  loadingInterviews.value = true
+  try {
+    const { data } = await getInterviews({ application_id: app.id })
+    interviews.value = Array.isArray(data) ? data : []
+  } catch { interviews.value = [] }
+  finally { loadingInterviews.value = false }
+}
+
 const currentApp = computed(() => {
   if (!props.candidate?.applications?.length) return null
   return props.candidate.applications.find(a => a.is_active) || props.candidate.applications[0]
 })
-
 const currentStageName = computed(() => currentApp.value?.current_stage?.name || '—')
-
-const aiScores = computed(() => {
-  if (!props.candidate?.parsed_data?.ai_evaluation) return null
-  return props.candidate.parsed_data.ai_evaluation
-})
-
+const aiScores = computed(() => props.candidate?.parsed_data?.ai_evaluation || null)
 const overallScore = computed(() => {
   if (!aiScores.value) return null
   const s = aiScores.value
   return Math.round(((s.skills_score || 0) * 0.4 + (s.experience_score || 0) * 0.4 + (s.culture_score || 0) * 0.2) * 10) / 10
 })
+const scheduledInterviews = computed(() => interviews.value.filter(i => i.status === 'scheduled'))
 
-/* ---- Source badge colors ---- */
-const sourceColors = {
-  LinkedIn: 'bg-blue-100 text-blue-700',
-  Referral: 'bg-emerald-100 text-emerald-700',
-  'Job Board': 'bg-orange-100 text-orange-700',
-  n8n_scrape: 'bg-purple-100 text-purple-700',
-  'AI Resume Screen': 'bg-amber-100 text-amber-700',
-}
+const sourceColors = { LinkedIn: 'bg-blue-100 text-blue-700', Referral: 'bg-emerald-100 text-emerald-700', 'Job Board': 'bg-orange-100 text-orange-700', n8n_scrape: 'bg-purple-100 text-purple-700', 'AI Resume Screen': 'bg-amber-100 text-amber-700' }
+function getSourceClass(s) { return sourceColors[s] || 'bg-slate-100 text-slate-600' }
+function getInitials(n) { return n ? n.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?' }
+function scoreColor(v) { return v >= 7 ? 'text-emerald-600' : v >= 5 ? 'text-amber-600' : 'text-red-500' }
+function scoreBg(v) { return v >= 7 ? 'bg-emerald-50 border-emerald-200' : v >= 5 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200' }
+function scoreBarColor(v) { return v >= 7 ? 'bg-emerald-500' : v >= 5 ? 'bg-amber-500' : 'bg-red-400' }
+function overallGradient(v) { return v >= 7 ? 'from-emerald-500 to-emerald-600' : v >= 5 ? 'from-amber-500 to-amber-600' : 'from-red-500 to-red-600' }
+function formatDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—' }
+function formatDateTime(d) { return d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' }
 
-function getSourceClass(source) {
-  return sourceColors[source] || 'bg-slate-100 text-slate-600'
-}
+function toggleEdit() { editing.value = !editing.value; errorMsg.value = ''; if (editing.value && props.candidate) { form.value = { full_name: props.candidate.full_name || '', email: props.candidate.email || '', phone: props.candidate.phone || '' } } }
+async function handleSave() { if (!form.value.full_name.trim() || !form.value.email.trim()) { errorMsg.value = 'Name and email are required.'; return } saving.value = true; errorMsg.value = ''; try { emit('update', props.candidate.id, { ...form.value }); editing.value = false } catch { errorMsg.value = 'Failed to update.' } finally { saving.value = false } }
+function handleDelete() { if (window.confirm(`Are you sure you want to delete "${props.candidate.full_name}"?`)) emit('delete', props.candidate.id) }
 
-function getInitials(name) {
-  if (!name) return '?'
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
-}
+function openScheduleForm() { interviewForm.value = { scheduled_at: '', duration_minutes: 30, interviewer_id: '' }; rescheduleId.value = null; showInterviewForm.value = true; errorMsg.value = '' }
+function openRescheduleForm(iv) { interviewForm.value = { scheduled_at: iv.scheduled_at?.slice(0, 16) || '', duration_minutes: iv.duration_minutes, interviewer_id: iv.interviewer_id || '' }; rescheduleId.value = iv.id; showInterviewForm.value = true; errorMsg.value = '' }
 
-function scoreColor(val) {
-  if (val >= 7) return 'text-emerald-600'
-  if (val >= 5) return 'text-amber-600'
-  return 'text-red-500'
-}
-
-function scoreBg(val) {
-  if (val >= 7) return 'bg-emerald-50 border-emerald-200'
-  if (val >= 5) return 'bg-amber-50 border-amber-200'
-  return 'bg-red-50 border-red-200'
-}
-
-function scoreBarColor(val) {
-  if (val >= 7) return 'bg-emerald-500'
-  if (val >= 5) return 'bg-amber-500'
-  return 'bg-red-400'
-}
-
-function overallGradient(val) {
-  if (val >= 7) return 'from-emerald-500 to-emerald-600'
-  if (val >= 5) return 'from-amber-500 to-amber-600'
-  return 'from-red-500 to-red-600'
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return '—'
-  return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-}
-
-/* ---- Actions ---- */
-function toggleEdit() {
-  editing.value = !editing.value
-  errorMsg.value = ''
-  if (editing.value && props.candidate) {
-    form.value = {
-      full_name: props.candidate.full_name || '',
-      email: props.candidate.email || '',
-      phone: props.candidate.phone || '',
-    }
-  }
-}
-
-async function handleSave() {
-  if (!form.value.full_name.trim() || !form.value.email.trim()) {
-    errorMsg.value = 'Name and email are required.'
-    return
-  }
-  saving.value = true
-  errorMsg.value = ''
+async function handleScheduleSubmit() {
+  if (!interviewForm.value.scheduled_at) { errorMsg.value = 'Please select a date and time.'; return }
+  submittingInterview.value = true; errorMsg.value = ''
   try {
-    emit('update', props.candidate.id, { ...form.value })
-    editing.value = false
+    if (rescheduleId.value) {
+      await updateInterview(rescheduleId.value, { scheduled_at: new Date(interviewForm.value.scheduled_at).toISOString(), duration_minutes: interviewForm.value.duration_minutes, interviewer_id: interviewForm.value.interviewer_id || null })
+    } else {
+      await createInterview({ application_id: currentApp.value.id, scheduled_at: new Date(interviewForm.value.scheduled_at).toISOString(), duration_minutes: interviewForm.value.duration_minutes, interviewer_id: interviewForm.value.interviewer_id || null })
+    }
+    showInterviewForm.value = false; await loadInterviews()
   } catch (e) {
-    errorMsg.value = 'Failed to update candidate.'
-  } finally {
-    saving.value = false
-  }
+    if (e?.response?.status === 409) { errorMsg.value = '⚠️ This interviewer is already booked at this time. Please select another time.' }
+    else { errorMsg.value = e?.response?.data?.detail || 'Failed to schedule interview.' }
+  } finally { submittingInterview.value = false }
 }
 
-function handleDelete() {
-  if (window.confirm(`Are you sure you want to delete "${props.candidate.full_name}"? This action cannot be undone.`)) {
-    emit('delete', props.candidate.id)
-  }
+async function handleCancelInterview(id) {
+  if (!window.confirm('Cancel this interview? The Google Calendar event will also be removed.')) return
+  try { await cancelInterview(id); await loadInterviews() }
+  catch (e) { errorMsg.value = e?.response?.data?.detail || 'Failed to cancel.' }
 }
 </script>
 
@@ -327,7 +283,117 @@ function handleDelete() {
                         d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
                 </svg>
                 <p class="text-xs text-slate-400 font-medium">No AI evaluation available</p>
-                <p class="text-[10px] text-slate-400 mt-0.5">Screen this candidate's resume to generate AI insights</p>
+              </div>
+
+              <!-- ===== INTERVIEWS SECTION ===== -->
+              <div v-if="currentApp" class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-xs font-bold text-hplus-text-muted uppercase tracking-wider flex items-center gap-1.5">
+                    <svg class="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                    </svg>
+                    Interviews
+                  </h3>
+                  <button v-if="!showInterviewForm" @click="openScheduleForm"
+                          class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold
+                                 bg-violet-100 text-violet-700 hover:bg-violet-200 transition">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Schedule
+                  </button>
+                </div>
+
+                <!-- Schedule / Reschedule Form -->
+                <div v-if="showInterviewForm" class="bg-violet-50 rounded-xl border border-violet-200 p-4 space-y-3">
+                  <h4 class="text-xs font-bold text-violet-700">{{ rescheduleId ? 'Reschedule Interview' : 'New Interview' }}</h4>
+                  <div>
+                    <label class="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Date & Time *</label>
+                    <input v-model="interviewForm.scheduled_at" type="datetime-local"
+                           class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm
+                                  focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-400 transition"/>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Duration (min)</label>
+                      <select v-model.number="interviewForm.duration_minutes"
+                              class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm
+                                     focus:outline-none focus:ring-2 focus:ring-violet-300 transition">
+                        <option :value="15">15 min</option>
+                        <option :value="30">30 min</option>
+                        <option :value="45">45 min</option>
+                        <option :value="60">60 min</option>
+                        <option :value="90">90 min</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-[10px] font-semibold text-slate-500 uppercase mb-1">Interviewer ID</label>
+                      <input v-model="interviewForm.interviewer_id" type="number" placeholder="Optional"
+                             class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm
+                                    placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-300 transition"/>
+                    </div>
+                  </div>
+                  <div class="flex gap-2 pt-1">
+                    <button @click="showInterviewForm = false"
+                            class="flex-1 py-2 rounded-lg text-xs font-medium text-slate-500 hover:bg-slate-100 transition">Cancel</button>
+                    <button @click="handleScheduleSubmit" :disabled="submittingInterview"
+                            class="flex-1 py-2 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700
+                                   disabled:opacity-50 transition">
+                      {{ submittingInterview ? 'Scheduling...' : (rescheduleId ? 'Update' : 'Schedule Interview') }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Existing Interviews List -->
+                <div v-if="loadingInterviews" class="text-center py-4">
+                  <p class="text-xs text-slate-400">Loading interviews...</p>
+                </div>
+                <div v-else-if="interviews.length === 0 && !showInterviewForm" class="bg-slate-50 rounded-xl border border-slate-200 p-4 text-center">
+                  <p class="text-xs text-slate-400">No interviews scheduled yet</p>
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="iv in interviews" :key="iv.id"
+                       class="rounded-xl border p-3 transition-all"
+                       :class="iv.status === 'cancelled' ? 'bg-red-50/50 border-red-200 opacity-60' : 'bg-white border-slate-200'">
+                    <div class="flex items-start gap-3">
+                      <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                           :class="iv.status === 'cancelled' ? 'bg-red-100' : 'bg-violet-100'">
+                        <svg class="w-4 h-4" :class="iv.status === 'cancelled' ? 'text-red-500' : 'text-violet-600'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <p class="text-sm font-semibold text-hplus-text">{{ formatDateTime(iv.scheduled_at) }}</p>
+                        <p class="text-[10px] text-slate-400">{{ iv.duration_minutes }} min · {{ iv.status }}</p>
+                        <a v-if="iv.google_meet_link" :href="iv.google_meet_link" target="_blank"
+                           class="inline-flex items-center gap-1 mt-1.5 px-2 py-1 rounded-md bg-blue-50 border border-blue-200 text-[10px] font-semibold text-blue-600 hover:bg-blue-100 transition">
+                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                          </svg>
+                          Google Meet
+                        </a>
+                      </div>
+                      <div v-if="iv.status === 'scheduled'" class="flex gap-1 flex-shrink-0">
+                        <button @click="openRescheduleForm(iv)" title="Reschedule"
+                                class="p-1.5 rounded-md hover:bg-slate-100 text-slate-400 hover:text-violet-600 transition">
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                          </svg>
+                        </button>
+                        <button @click="handleCancelInterview(iv.id)" title="Cancel"
+                                class="p-1.5 rounded-md hover:bg-red-50 text-slate-400 hover:text-red-500 transition">
+                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </template>
 

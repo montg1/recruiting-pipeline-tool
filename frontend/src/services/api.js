@@ -46,4 +46,10 @@ export const screenResume = (file, jobId) => {
 /* ---- Jobs ---- */
 export const getJobs = () => api.get('/jobs/')
 
+/* ---- Interviews (Module 4) ---- */
+export const getInterviews = (params = {}) => api.get('/interviews/', { params })
+export const createInterview = (data) => api.post('/interviews/', data)
+export const updateInterview = (id, data) => api.put(`/interviews/${id}`, data)
+export const cancelInterview = (id) => api.delete(`/interviews/${id}`)
+
 export default api
