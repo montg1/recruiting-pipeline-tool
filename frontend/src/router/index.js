@@ -23,6 +23,11 @@ const router = createRouter({
       name: 'scraper',
       component: () => import('@/views/ScraperView.vue'),
     },
+    {
+      path: '/cv-screener',
+      name: 'cv-screener',
+      component: () => import('@/views/CVUploadView.vue'),
+    },
   ],
 })
 

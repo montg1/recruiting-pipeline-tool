@@ -32,4 +32,18 @@ export const getStages = () => api.get('/candidates/stages')
 export const extractCandidate = (inputType, payload) =>
   api.post('/scraper/extract', { input_type: inputType, payload })
 
+/* ---- Resume Screener (Module 2) ---- */
+export const screenResume = (file, jobId) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('job_id', jobId)
+  return api.post('/resumes/screen', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000, // 2 min — Claude can take time
+  })
+}
+
+/* ---- Jobs ---- */
+export const getJobs = () => api.get('/jobs/')
+
 export default api

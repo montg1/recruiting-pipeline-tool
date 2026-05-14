@@ -60,8 +60,10 @@ stages = [
 ]
 db.add_all(stages)
 
-job = Job(id=1, title="Backend Engineer", department="Engineering", status="open")
-db.add(job)
+job1 = Job(id=1, title="Backend Engineer", department="Engineering", description="Build and maintain REST APIs using FastAPI and Python.", requirements="Python, FastAPI, PostgreSQL, Docker, 3+ years experience", status="open")
+job2 = Job(id=2, title="Frontend Developer", department="Engineering", description="Build responsive UIs with Vue 3 and modern CSS.", requirements="Vue.js, TypeScript, Tailwind CSS, 2+ years experience", status="open")
+job3 = Job(id=3, title="Full Stack Developer", department="Engineering", description="End-to-end web application development.", requirements="Python, JavaScript, React or Vue, SQL, Docker, 3+ years experience", status="open")
+db.add_all([job1, job2, job3])
 
 # Seed candidates across various stages
 seed = [
