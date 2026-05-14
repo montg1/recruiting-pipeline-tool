@@ -9,9 +9,13 @@ import { onMounted, ref, computed } from 'vue'
 import { usePipelineStore } from '@/stores/pipeline'
 import CandidateCard from '@/components/CandidateCard.vue'
 import AddCandidateModal from '@/components/AddCandidateModal.vue'
+import CandidateModal from '@/components/CandidateModal.vue'
+import { updateCandidate, deleteCandidate } from '@/services/api'
 
 const store = usePipelineStore()
 const showAddModal = ref(false)
+const selectedCandidate = ref(null)
+const showCandidateModal = ref(false)
 const dragOverStageId = ref(null)
 const notification = ref(null)
 
@@ -103,6 +107,39 @@ function showNotification(message, type = 'success') {
   setTimeout(() => {
     notification.value = null
   }, 3000)
+}
+
+/* ---- Candidate modal ---- */
+function openCandidateModal(candidate) {
+  selectedCandidate.value = candidate
+  showCandidateModal.value = true
+}
+
+async function handleUpdateCandidate(id, data) {
+  try {
+    await updateCandidate(id, data)
+    // Update local state
+    const idx = store.candidates.findIndex(c => c.id === id)
+    if (idx !== -1) {
+      store.candidates[idx] = { ...store.candidates[idx], ...data }
+      selectedCandidate.value = store.candidates[idx]
+    }
+    showNotification(`${data.full_name || 'Candidate'} updated`, 'success')
+  } catch (e) {
+    showNotification(e?.response?.data?.detail || 'Failed to update', 'error')
+  }
+}
+
+async function handleDeleteCandidate(id) {
+  try {
+    await deleteCandidate(id)
+    store.candidates = store.candidates.filter(c => c.id !== id)
+    showCandidateModal.value = false
+    selectedCandidate.value = null
+    showNotification('Candidate deleted', 'success')
+  } catch (e) {
+    showNotification(e?.response?.data?.detail || 'Failed to delete', 'error')
+  }
 }
 </script>
 
@@ -240,6 +277,7 @@ function showNotification(message, type = 'success') {
                 :key="`${card.candidate.id}-${card.application.id}`"
                 :candidate="card.candidate"
                 :application="card.application"
+                @open="openCandidateModal"
               />
             </TransitionGroup>
 
@@ -268,6 +306,15 @@ function showNotification(message, type = 'success') {
       :show="showAddModal"
       @close="showAddModal = false"
       @submit="handleAddCandidate"
+    />
+
+    <!-- Candidate Detail Modal -->
+    <CandidateModal
+      :show="showCandidateModal"
+      :candidate="selectedCandidate"
+      @close="showCandidateModal = false"
+      @update="handleUpdateCandidate"
+      @delete="handleDeleteCandidate"
     />
 
     <!-- Toast Notification -->

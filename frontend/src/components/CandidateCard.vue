@@ -8,7 +8,9 @@ const props = defineProps({
   application: { type: Object, required: true },
 })
 
-const emit = defineEmits(['dragstart'])
+const emit = defineEmits(['dragstart', 'open'])
+
+let isDragging = false
 
 const sourceColors = {
   LinkedIn: 'bg-blue-100 text-blue-700',
@@ -30,6 +32,7 @@ function getInitials(name) {
 }
 
 function onDragStart(event) {
+  isDragging = true
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData(
     'application/json',
@@ -45,6 +48,11 @@ function onDragStart(event) {
 
 function onDragEnd(event) {
   event.target.classList.remove('drag-ghost')
+  setTimeout(() => { isDragging = false }, 100)
+}
+
+function handleClick() {
+  if (!isDragging) emit('open', props.candidate)
 }
 
 function formatDate(dateStr) {
@@ -58,6 +66,7 @@ function formatDate(dateStr) {
     draggable="true"
     @dragstart="onDragStart"
     @dragend="onDragEnd"
+    @click="handleClick"
     class="group bg-white rounded-xl p-4 shadow-sm border border-hplus-border
            hover:shadow-md hover:border-hplus-gold/30
            transition-all duration-200 cursor-grab active:cursor-grabbing"
