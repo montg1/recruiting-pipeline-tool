@@ -34,20 +34,31 @@ export const usePipelineStore = defineStore('pipeline', () => {
         cards: [],
       }
     }
-    // Walk every candidate's applications and slot them into columns
+
+    // Index stage order so we can pick the most-advanced application per candidate
+    const stageOrder = {}
+    for (const stage of stages.value) {
+      stageOrder[stage.id] = stage.order_index ?? 0
+    }
+
+    // One card per candidate — use their most-advanced active application
     for (const candidate of candidates.value) {
       if (!candidate.applications) continue
-      for (const app of candidate.applications) {
-        if (!app.is_active) continue
-        const col = cols[app.current_stage_id]
-        if (col) {
-          col.cards.push({
-            candidate,
-            application: app,
-          })
-        }
+      const activeApps = candidate.applications.filter((app) => app.is_active)
+      if (activeApps.length === 0) continue
+
+      // Pick the application furthest along in the pipeline
+      activeApps.sort(
+        (a, b) => (stageOrder[b.current_stage_id] ?? 0) - (stageOrder[a.current_stage_id] ?? 0),
+      )
+      const app = activeApps[0]
+
+      const col = cols[app.current_stage_id]
+      if (col) {
+        col.cards.push({ candidate, application: app })
       }
     }
+
     // Sort cards within each column by kanban_position
     for (const col of Object.values(cols)) {
       col.cards.sort((a, b) => a.application.kanban_position - b.application.kanban_position)
