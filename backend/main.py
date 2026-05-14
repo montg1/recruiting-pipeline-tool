@@ -49,7 +49,7 @@ from api.jobs import router as jobs_router
 
 app.include_router(jobs_router, prefix="/api/jobs", tags=["Jobs"])
 
-# from api.interviews import router as interviews_router
-# app.include_router(interviews_router, prefix="/api/interviews", tags=["Interviews"])
+from api.interviews import router as interviews_router
 
+app.include_router(interviews_router, prefix="/api/interviews", tags=["Interviews"])
 

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     # n8n Automation
     n8n_webhook_url: str = "http://localhost:5678/webhook"
+    n8n_interview_webhook_url: str = "http://localhost:5678/webhook-interview"
 
     class Config:
         env_file = ".env"
