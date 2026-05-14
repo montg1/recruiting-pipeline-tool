@@ -126,7 +126,36 @@ recruiting-pipeline-tool/
 ## Modules
 
 ### Module 1 — Candidate Data Scraper
-HR pastes a LinkedIn URL or raw profile text. FastAPI forwards it to an **n8n webhook** which scrapes the page, feeds the raw text to Claude AI for normalization, and returns structured JSON (name, skills, experience). HR reviews and edits the result before saving.
+
+> **Status: Not functional in production.** The scraper UI exists but the backend pipeline cannot reliably extract data from LinkedIn or other job boards at this time. Raw text paste still works — HR can manually paste profile text and Claude AI will normalize it into structured JSON.
+
+#### Why scraping is hard
+
+**LinkedIn** is the primary blocker. Multiple layers of protection make automated scraping extremely difficult:
+- **Cloudflare** blocks headless browsers by fingerprinting the TLS handshake and JS execution environment
+- **Cookie / session gates** — LinkedIn requires a logged-in session; session cookies expire and trigger re-authentication challenges
+- **Proxy detection** — datacenter IPs are blocked; residential proxies help but are expensive and still rate-limited
+- **Python library blocks** — common libraries (`requests`, `httpx`, `selenium`, `playwright` with default fingerprints) are all detected and served blank or redirected pages
+
+A custom `test/linkedin.py` script was written using **ZenRows Scraping Browser** (Playwright over CDP) to bypass these protections, but ZenRows is a paid service and the scraping is still fragile.
+
+**JobsDB** (`test/test.js` — Node.js Playwright) is partially working:
+- Successfully scrapes name, title, skills, and experience summary
+- **Education field is not extracted** (DOM structure differs from other sections)
+- **Not sustainable**: the scraper uses a logged-in browser session; every time the JobsDB session cookie expires, the script must be re-authenticated manually before it will work again
+
+#### Implementation plan
+
+The planned long-term solution for LinkedIn is **[Apify](https://apify.com/) — LinkedIn Profile Scraper actor**, integrated via n8n:
+
+| Step | Detail |
+|---|---|
+| 1. Apify actor | Use the `apify/linkedin-profile-scraper` actor via the Apify API |
+| 2. n8n HTTP node | n8n sends the LinkedIn URL to the Apify API and polls for the result |
+| 3. Claude AI node | n8n feeds the raw Apify JSON into Claude to normalize into our schema |
+| 4. FastAPI | Receives the normalized JSON and saves the candidate |
+
+**Constraint:** Apify LinkedIn scraper does not support the free tier — it requires a paid Apify subscription. This feature is deferred until a budget is allocated for the scraping service.
 
 ### Module 2 — AI Resume Screener
 HR uploads a PDF CV and selects a job position. FastAPI extracts the text with **PyPDF2**, fetches the job description from the DB, and forwards both to **n8n** where Claude AI scores the candidate 0–10 on Skills, Experience, and Culture fit. Returns a scorecard with reasoning and prescreen interview questions.
