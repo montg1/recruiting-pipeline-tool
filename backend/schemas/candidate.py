@@ -100,6 +100,9 @@ class ApplicationResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # Interview data (from the most recent scheduled interview)
+    google_meet_link: Optional[str] = None
+    next_interview_at: Optional[datetime] = None
 
 
 class CandidateDetailResponse(CandidateResponse):

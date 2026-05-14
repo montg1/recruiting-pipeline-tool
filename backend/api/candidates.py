@@ -129,17 +129,36 @@ def list_candidates(
 
 @router.get("/{candidate_id}", response_model=CandidateDetailResponse)
 def get_candidate(candidate_id: int, db: Session = Depends(get_db)):
-    """Get a single candidate with their applications (Kanban cards)."""
+    """Get a single candidate with their applications (Kanban cards).
+
+    For each application, also resolves the most recent 'scheduled' interview
+    and exposes google_meet_link / next_interview_at on the response.
+    """
     candidate = (
         db.query(Candidate)
         .options(
-            joinedload(Candidate.applications).joinedload(Application.current_stage)
+            joinedload(Candidate.applications).joinedload(Application.current_stage),
+            joinedload(Candidate.applications).joinedload(Application.interviews),
         )
         .filter(Candidate.id == candidate_id, Candidate.is_active == True)  # noqa: E712
         .first()
     )
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    # Inject interview data onto each application for the serializer
+    for app in candidate.applications:
+        scheduled = [iv for iv in (app.interviews or []) if iv.status == "scheduled"]
+        if scheduled:
+            # Pick the nearest upcoming interview
+            scheduled.sort(key=lambda iv: iv.scheduled_at)
+            nearest = scheduled[0]
+            app.google_meet_link = nearest.google_meet_link
+            app.next_interview_at = nearest.scheduled_at
+        else:
+            app.google_meet_link = None
+            app.next_interview_at = None
+
     return candidate
 
 
