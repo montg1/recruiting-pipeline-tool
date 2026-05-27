@@ -39,5 +39,9 @@ Thumbs.db
 # Internal test/design docs
 test/
 
+# Claude Code local session/settings
+.claude/
+
 # Temp files
 theme_page_*.png
+jd.txt

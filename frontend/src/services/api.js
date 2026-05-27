@@ -29,6 +29,14 @@ export const updateApplicationStage = (candidateId, appId, data) =>
 export const getStages = () => api.get('/candidates/stages')
 
 /* ---- Scraper (Module 1) ---- */
+// JD-driven discovery: parse JD → search sources → AI-ranked shortlist
+export const searchFromJD = (payload) =>
+  api.post('/scraper/search-from-jd', payload, { timeout: 180000 }) // scraping + LLM ranking can be slow (esp. local Ollama)
+
+// Promote HR-approved leads into the Applicant Tracker
+export const approveLeads = (payload) => api.post('/scraper/approve', payload)
+
+// Manual fallback: extract one candidate from a URL / pasted text via n8n
 export const extractCandidate = (inputType, payload) =>
   api.post('/scraper/extract', { input_type: inputType, payload })
 

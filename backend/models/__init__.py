@@ -12,3 +12,4 @@ from models.application_stage_history import ApplicationStageHistory  # noqa: F4
 from models.resume_score import ResumeScore               # noqa: F401
 from models.interview import Interview                    # noqa: F401
 from models.application_note import ApplicationNote       # noqa: F401
+from models.candidate_search import CandidateSearch        # noqa: F401

@@ -34,15 +34,18 @@ CREATE TABLE users (
 
 -- ---------- Jobs (open requisitions) ----------
 CREATE TABLE jobs (
-    id            SERIAL PRIMARY KEY,
-    title         VARCHAR(128) NOT NULL,
-    department    VARCHAR(64),
-    description   TEXT,
-    requirements  TEXT,
-    status        VARCHAR(16)  NOT NULL DEFAULT 'open',  -- 'open' | 'on_hold' | 'closed'
-    owner_id      INTEGER REFERENCES users(id),
-    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id              SERIAL PRIMARY KEY,
+    title           VARCHAR(128) NOT NULL,
+    department      VARCHAR(64),
+    description     TEXT,
+    requirements    TEXT,
+    status          VARCHAR(16)  NOT NULL DEFAULT 'open',  -- 'open' | 'on_hold' | 'closed'
+    parsed_criteria JSONB,                                 -- Module 1: cached AI parse of the JD
+                                                           -- {position, role_keywords[], must_have_skills[],
+                                                           --  nice_to_have[], min_years, location, location_country}
+    owner_id        INTEGER REFERENCES users(id),
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 -- ---------- Candidates (people) ----------
@@ -62,6 +65,27 @@ CREATE TABLE candidates (
 );
 CREATE INDEX idx_candidates_active     ON candidates(is_active);
 CREATE INDEX idx_candidates_parsed_gin ON candidates USING GIN (parsed_data);
+
+-- ---------- Candidate searches (Module 1 staging) ----------
+-- One row = one "search from JD" run. Holds the ranked shortlist of *leads*
+-- (people found across sources) BEFORE any HR approval. Approved leads are
+-- promoted into `candidates` + `applications`; un-approved ones stay here only.
+-- Kept separate from `candidates` because scraped leads usually have no email
+-- (candidates.email is NOT NULL UNIQUE) and aren't real pipeline members yet.
+CREATE TABLE candidate_searches (
+    id            SERIAL PRIMARY KEY,
+    job_id        INTEGER REFERENCES jobs(id) ON DELETE CASCADE,  -- the JD this search was run for
+    criteria      JSONB,            -- snapshot of parsed criteria used for this run
+    sources       JSONB,            -- ["github", "linkedin"] — which adapters ran
+    queries       JSONB,            -- {github: "...", linkedin: "site:..."} actual queries sent
+    results       JSONB NOT NULL DEFAULT '[]',  -- ranked leads: [{name, headline, location,
+                                                --  source, profile_url, skills[], match_score,
+                                                --  verdict, reasons[], missing[], status}]
+    result_count  INTEGER NOT NULL DEFAULT 0,
+    status        VARCHAR(16) NOT NULL DEFAULT 'completed',  -- 'completed' | 'partial' | 'failed'
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_candidate_searches_job ON candidate_searches(job_id);
 
 -- ---------- Applications (THE Kanban card — Module 3) ----------
 -- One row = one candidate's pipeline for one job.

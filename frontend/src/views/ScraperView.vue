@@ -1,132 +1,150 @@
 <script setup>
 /**
- * ScraperView — Module 1: Candidate Data Extraction
- * Two-step flow: Extract → Preview/Edit → Save to Pipeline
+ * ScraperView — Module 1: JD-driven Candidate Discovery
+ * Flow: Job/JD + sources → AI-ranked shortlist → HR selects → push to Tracker.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { extractCandidate, createCandidate, createApplication } from '@/services/api'
+import { getJobs, searchFromJD, approveLeads } from '@/services/api'
 
 const router = useRouter()
 
 /* ---- State ---- */
-const step = ref(1) // 1 = input, 2 = preview/edit
-const inputType = ref('url')
-const payload = ref('')
-const extracting = ref(false)
-const saving = ref(false)
+const step = ref(1) // 1 = input, 2 = shortlist review
+const jobs = ref([])
+const selectedJobId = ref(null)
+const jdText = ref('')
+const sources = ref({ github: true, linkedin: true })
+const perSource = ref(10)
+
+const searching = ref(false)
+const approving = ref(false)
 const error = ref(null)
 const notification = ref(null)
 
-// Editable candidate fields (populated after extraction)
-const form = ref({
-  full_name: '',
-  email: '',
-  phone: '',
-  linkedin_url: '',
-  source: '',
-  skills: '',
-  experience_summary: '',
-  education_summary: '',
-})
-const rawJson = ref(null)
+const result = ref(null)          // CandidateSearchResponse
+const selected = ref(new Set())   // indices of chosen leads
 
-/* ---- Input type toggle ---- */
-const isUrl = computed(() => inputType.value === 'url')
-const canExtract = computed(() => payload.value.trim().length > 5)
+/* ---- Derived ---- */
+const chosenSources = computed(() => Object.keys(sources.value).filter(k => sources.value[k]))
+const canSearch = computed(() =>
+  chosenSources.value.length > 0 && (jdText.value.trim().length > 20 || selectedJobId.value != null)
+)
+const leads = computed(() => result.value?.results || [])
+const isPartial = computed(() => result.value?.status === 'partial')
+const allSelected = computed(() => leads.value.length > 0 && selected.value.size === leads.value.length)
 
-/* ---- Step 1: Extract ---- */
-async function handleExtract() {
-  if (!canExtract.value) return
-  extracting.value = true
-  error.value = null
-
+/* ---- Load jobs for the dropdown ---- */
+onMounted(async () => {
   try {
-    const { data } = await extractCandidate(inputType.value, payload.value.trim())
-    rawJson.value = data
+    const { data } = await getJobs()
+    jobs.value = data
+  } catch { /* dropdown stays empty; raw JD still works for search */ }
+})
 
-    // Map n8n response fields into editable form
-    form.value = {
-      full_name: data.full_name || data.Name || data.name || '',
-      email: data.email || data.Email || '',
-      phone: data.phone || data.Phone || '',
-      linkedin_url: data.linkedin_url || data.LinkedIn || payload.value.trim(),
-      source: data.source || (isUrl.value ? 'LinkedIn' : 'Manual Entry'),
-      skills: Array.isArray(data.skills || data.Skills)
-        ? (data.skills || data.Skills).join(', ')
-        : (data.skills || data.Skills || ''),
-      experience_summary: Array.isArray(data.experience || data.WorkExperience)
-        ? (data.experience || data.WorkExperience).map(e =>
-            `${e.title || e.role || ''} at ${e.company || ''} (${e.date_range || e.dates || ''})`
-          ).join('\n')
-        : (data.experience_summary || data.experience || ''),
-      education_summary: Array.isArray(data.education || data.Education)
-        ? (data.education || data.Education).map(e =>
-            `${e.degree || ''} — ${e.school || e.institution || ''}`
-          ).join('\n')
-        : (data.education_summary || data.education || ''),
-    }
-
-    step.value = 2
-  } catch (e) {
-    error.value = e?.response?.data?.detail || 'Extraction failed. Check your n8n webhook.'
-  } finally {
-    extracting.value = false
+function onJobChange() {
+  const job = jobs.value.find(j => j.id === selectedJobId.value)
+  if (job) {
+    // prefill the editable JD box from the job's stored text
+    jdText.value = [job.title, job.description, job.requirements].filter(Boolean).join('\n\n')
   }
 }
 
-/* ---- Step 2: Save to pipeline ---- */
-async function handleSave() {
-  if (!form.value.full_name || !form.value.email) {
-    error.value = 'Name and Email are required.'
+/* ---- Step 1: Search ---- */
+async function handleSearch() {
+  if (!canSearch.value) return
+  searching.value = true
+  error.value = null
+  try {
+    const { data } = await searchFromJD({
+      jd_text: jdText.value.trim() || null,
+      job_id: selectedJobId.value,
+      sources: chosenSources.value,
+      per_source: perSource.value,
+    })
+    result.value = data
+    selected.value = new Set()
+    step.value = 2
+  } catch (e) {
+    error.value = e?.response?.data?.detail || 'Search failed. Check API keys (ANTHROPIC / ZENROWS).'
+  } finally {
+    searching.value = false
+  }
+}
+
+/* ---- Step 2: selection ---- */
+function toggle(i) {
+  const s = new Set(selected.value)
+  s.has(i) ? s.delete(i) : s.add(i)
+  selected.value = s
+}
+function toggleAll() {
+  selected.value = allSelected.value ? new Set() : new Set(leads.value.map((_, i) => i))
+}
+
+/* ---- Step 2: Approve → push to tracker ---- */
+async function handleApprove() {
+  if (selected.value.size === 0) return
+  if (selectedJobId.value == null) {
+    error.value = 'Select a Job above to push the chosen candidates into.'
     return
   }
-  saving.value = true
+  approving.value = true
   error.value = null
-
   try {
-    const candidatePayload = {
-      full_name: form.value.full_name,
-      email: form.value.email,
-      phone: form.value.phone || null,
-      linkedin_url: form.value.linkedin_url || null,
-      source: form.value.source || null,
-      parsed_data: {
-        skills: form.value.skills,
-        experience: form.value.experience_summary,
-        education: form.value.education_summary,
-        raw_extraction: rawJson.value,
-      },
-    }
-
-    const { data: candidate } = await createCandidate(candidatePayload)
-
-    // Auto-apply to default job (job_id = 1)
-    try {
-      await createApplication(candidate.id, { job_id: 1 })
-    } catch (_) { /* job may not exist yet */ }
-
-    showNotification(`${form.value.full_name} saved to pipeline!`)
-    setTimeout(() => router.push('/'), 1500)
+    const payloadLeads = [...selected.value].map(i => {
+      const r = leads.value[i]
+      return {
+        full_name: r.full_name,
+        email: r.email || null,
+        linkedin_url: r.source === 'LinkedIn' ? r.profile_url : null,
+        profile_url: r.profile_url || null,
+        source: r.source,
+        skills: r.skills || [],
+        experience_summary: r.experience_summary || null,
+        education_summary: r.education_summary || null,
+        match_score: r.match_score,
+        reasons: r.reasons || [],
+      }
+    })
+    const { data } = await approveLeads({
+      job_id: selectedJobId.value,
+      leads: payloadLeads,
+      search_id: result.value?.id || null,
+    })
+    showNotification(`Pushed ${data.created} candidate(s) to the pipeline` +
+      (data.skipped ? ` · ${data.skipped} already existed` : ''))
+    setTimeout(() => router.push('/'), 1800)
   } catch (e) {
-    error.value = e?.response?.data?.detail || 'Failed to save candidate.'
+    error.value = e?.response?.data?.detail || 'Failed to push candidates.'
   } finally {
-    saving.value = false
+    approving.value = false
   }
 }
 
 /* ---- Helpers ---- */
-function resetForm() {
+function resetSearch() {
   step.value = 1
-  payload.value = ''
+  result.value = null
+  selected.value = new Set()
   error.value = null
-  rawJson.value = null
-  form.value = { full_name:'', email:'', phone:'', linkedin_url:'', source:'', skills:'', experience_summary:'', education_summary:'' }
+}
+function showNotification(msg) {
+  notification.value = msg
+  setTimeout(() => { notification.value = null }, 3500)
 }
 
-function showNotification(message) {
-  notification.value = message
-  setTimeout(() => { notification.value = null }, 3000)
+function verdictClass(verdict) {
+  return {
+    Strong:   'bg-emerald-50 text-emerald-700 border-emerald-200',
+    Possible: 'bg-amber-50 text-amber-700 border-amber-200',
+    Weak:     'bg-slate-100 text-slate-500 border-slate-200',
+  }[verdict] || 'bg-slate-100 text-slate-500 border-slate-200'
+}
+function scoreColor(s) {
+  if (s >= 75) return 'text-emerald-600'
+  if (s >= 50) return 'text-amber-600'
+  return 'text-slate-400'
 }
 </script>
 
@@ -134,29 +152,24 @@ function showNotification(message) {
   <div class="min-h-[calc(100vh-4rem)]">
     <!-- Header -->
     <div class="bg-white border-b border-hplus-border sticky top-16 z-30">
-      <div class="px-4 sm:px-6 lg:px-8 py-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h1 class="text-2xl font-bold text-hplus-text tracking-tight">
-              Candidate Scraper
-            </h1>
-            <p class="text-sm text-hplus-text-muted mt-0.5">
-              Extract candidate data from a URL or paste raw text
-            </p>
+      <div class="px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-hplus-text tracking-tight">Candidate Discovery</h1>
+          <p class="text-sm text-hplus-text-muted mt-0.5">
+            Find &amp; rank candidates from a job description across multiple sources
+          </p>
+        </div>
+        <div class="hidden sm:flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all"
+                 :class="step >= 1 ? 'bg-hplus-gold text-hplus-navy' : 'bg-slate-200 text-slate-500'">1</div>
+            <span class="text-xs font-medium" :class="step >= 1 ? 'text-hplus-text' : 'text-slate-400'">JD &amp; Sources</span>
           </div>
-          <!-- Step indicator -->
-          <div class="hidden sm:flex items-center gap-3">
-            <div class="flex items-center gap-2">
-              <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all"
-                   :class="step >= 1 ? 'bg-hplus-gold text-hplus-navy' : 'bg-slate-200 text-slate-500'">1</div>
-              <span class="text-xs font-medium" :class="step >= 1 ? 'text-hplus-text' : 'text-slate-400'">Extract</span>
-            </div>
-            <div class="w-8 h-px" :class="step >= 2 ? 'bg-hplus-gold' : 'bg-slate-200'"></div>
-            <div class="flex items-center gap-2">
-              <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all"
-                   :class="step >= 2 ? 'bg-hplus-gold text-hplus-navy' : 'bg-slate-200 text-slate-500'">2</div>
-              <span class="text-xs font-medium" :class="step >= 2 ? 'text-hplus-text' : 'text-slate-400'">Review & Save</span>
-            </div>
+          <div class="w-8 h-px" :class="step >= 2 ? 'bg-hplus-gold' : 'bg-slate-200'"></div>
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all"
+                 :class="step >= 2 ? 'bg-hplus-gold text-hplus-navy' : 'bg-slate-200 text-slate-500'">2</div>
+            <span class="text-xs font-medium" :class="step >= 2 ? 'text-hplus-text' : 'text-slate-400'">Review &amp; Push</span>
           </div>
         </div>
       </div>
@@ -174,207 +187,187 @@ function showNotification(message) {
         </div>
       </div>
 
-      <!-- ============ STEP 1: Input ============ -->
       <Transition name="fade" mode="out-in">
+        <!-- ============ STEP 1: JD + sources ============ -->
         <div v-if="step === 1" key="step1">
           <div class="bg-white rounded-2xl border border-hplus-border shadow-sm p-6 sm:p-8">
-            <h2 class="text-lg font-bold text-hplus-text mb-1">Data Source</h2>
-            <p class="text-sm text-hplus-text-muted mb-6">Choose how you'd like to provide candidate information.</p>
+            <h2 class="text-lg font-bold text-hplus-text mb-1">Job Description</h2>
+            <p class="text-sm text-hplus-text-muted mb-6">Pick an open job or paste a JD. The AI builds the search queries.</p>
 
-            <!-- Type toggle -->
-            <div class="flex rounded-xl bg-slate-100 p-1 mb-6">
-              <button v-for="t in [{val:'url', label:'URL (LinkedIn)', icon:'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101'}, {val:'text', label:'Paste Text', icon:'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'}]"
-                      :key="t.val"
-                      @click="inputType = t.val"
-                      class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all duration-200"
-                      :class="inputType === t.val
-                        ? 'bg-white text-hplus-navy shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="t.icon"/>
-                </svg>
-                {{ t.label }}
-              </button>
+            <!-- Job dropdown -->
+            <div class="mb-5">
+              <label class="block text-xs font-semibold text-hplus-text mb-1.5">Open Job (candidates get pushed here on approval)</label>
+              <select v-model="selectedJobId" @change="onJobChange"
+                      class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm bg-white
+                             focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition">
+                <option :value="null">— None (search by raw JD only) —</option>
+                <option v-for="j in jobs" :key="j.id" :value="j.id">{{ j.title }}<span v-if="j.department"> · {{ j.department }}</span></option>
+              </select>
             </div>
 
-            <!-- Input field -->
+            <!-- JD textarea -->
             <div class="mb-6">
-              <label class="block text-sm font-semibold text-hplus-text mb-2">
-                {{ isUrl ? 'Profile URL' : 'Candidate Information' }}
-              </label>
-              <input v-if="isUrl" v-model="payload" type="url"
-                     placeholder="https://www.linkedin.com/in/john-doe/"
-                     class="w-full px-4 py-3 rounded-xl border border-hplus-border bg-slate-50/50
-                            text-sm text-hplus-text placeholder-slate-400
-                            focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold
-                            transition-all duration-200" />
-              <textarea v-else v-model="payload" rows="8"
-                        placeholder="Paste resume text, job application details, or any candidate information here..."
-                        class="w-full px-4 py-3 rounded-xl border border-hplus-border bg-slate-50/50
-                               text-sm text-hplus-text placeholder-slate-400 resize-none
-                               focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold
-                               transition-all duration-200"></textarea>
+              <label class="block text-xs font-semibold text-hplus-text mb-1.5">JD / Criteria (skills, experience, role)</label>
+              <textarea v-model="jdText" rows="8"
+                        placeholder="Paste the job description here — Thai or English…"
+                        class="w-full px-4 py-3 rounded-xl border border-hplus-border bg-slate-50/50 text-sm text-hplus-text
+                               placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-hplus-gold/40
+                               focus:border-hplus-gold transition"></textarea>
             </div>
 
-            <!-- Extract button -->
-            <button @click="handleExtract" :disabled="!canExtract || extracting"
-                    class="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold
-                           transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    :class="canExtract
-                      ? 'bg-hplus-gold text-hplus-navy shadow-md shadow-hplus-gold/25 hover:bg-amber-400 hover:shadow-lg active:scale-[0.98]'
-                      : 'bg-slate-200 text-slate-500'">
-              <template v-if="extracting">
+            <!-- Sources -->
+            <div class="mb-6">
+              <label class="block text-xs font-semibold text-hplus-text mb-2">Sources to search</label>
+              <div class="flex flex-wrap gap-3">
+                <label v-for="src in [{k:'github',label:'GitHub'},{k:'linkedin',label:'LinkedIn'}]" :key="src.k"
+                       class="flex items-center gap-2 px-4 py-2.5 rounded-xl border cursor-pointer transition-all"
+                       :class="sources[src.k] ? 'border-hplus-gold bg-hplus-gold/10 text-hplus-navy' : 'border-hplus-border text-slate-500 hover:border-slate-300'">
+                  <input type="checkbox" v-model="sources[src.k]" class="accent-hplus-gold" />
+                  <span class="text-sm font-medium">{{ src.label }}</span>
+                </label>
+                <div class="flex items-center gap-2 ml-auto">
+                  <label class="text-xs text-slate-500">per source</label>
+                  <input v-model.number="perSource" type="number" min="1" max="25"
+                         class="w-16 px-2 py-1.5 rounded-lg border border-hplus-border text-sm text-center" />
+                </div>
+              </div>
+            </div>
+
+            <button @click="handleSearch" :disabled="!canSearch || searching"
+                    class="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-all duration-200
+                           disabled:opacity-50 disabled:cursor-not-allowed"
+                    :class="canSearch ? 'bg-hplus-gold text-hplus-navy shadow-md shadow-hplus-gold/25 hover:bg-amber-400 hover:shadow-lg active:scale-[0.98]' : 'bg-slate-200 text-slate-500'">
+              <template v-if="searching">
                 <div class="flex gap-1.5">
                   <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
                   <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
                   <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
                 </div>
-                Extracting...
+                Searching &amp; ranking…
               </template>
               <template v-else>
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                 </svg>
-                Extract Candidate Data
+                Find Candidates
               </template>
             </button>
           </div>
         </div>
 
-        <!-- ============ STEP 2: Preview & Edit ============ -->
+        <!-- ============ STEP 2: Shortlist ============ -->
         <div v-else key="step2">
-          <div class="bg-white rounded-2xl border border-hplus-border shadow-sm p-6 sm:p-8">
-            <div class="flex items-center justify-between mb-6">
-              <div>
-                <h2 class="text-lg font-bold text-hplus-text">Review Extracted Data</h2>
-                <p class="text-sm text-hplus-text-muted">Verify and edit the details before saving.</p>
-              </div>
-              <button @click="resetForm"
-                      class="text-xs font-medium text-slate-500 hover:text-hplus-navy px-3 py-1.5 rounded-lg hover:bg-slate-100 transition">
-                Start Over
-              </button>
+          <!-- Criteria summary -->
+          <div class="bg-white rounded-2xl border border-hplus-border shadow-sm p-5 mb-4">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-lg font-bold text-hplus-text">Ranked Shortlist <span class="text-sm font-normal text-slate-400">({{ leads.length }})</span></h2>
+              <button @click="resetSearch" class="text-xs font-medium text-slate-500 hover:text-hplus-navy px-3 py-1.5 rounded-lg hover:bg-slate-100 transition">New Search</button>
             </div>
-
-            <!-- Form fields -->
-            <div class="space-y-5">
-              <!-- Row: Name + Email -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-xs font-semibold text-hplus-text mb-1.5">
-                    Full Name <span class="text-red-400">*</span>
-                  </label>
-                  <input v-model="form.full_name" type="text"
-                         class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm
-                                focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition" />
-                </div>
-                <div>
-                  <label class="block text-xs font-semibold text-hplus-text mb-1.5">
-                    Email <span class="text-red-400">*</span>
-                  </label>
-                  <input v-model="form.email" type="email"
-                         class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm
-                                focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition" />
-                </div>
-              </div>
-
-              <!-- Row: Phone + Source -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-xs font-semibold text-hplus-text mb-1.5">Phone</label>
-                  <input v-model="form.phone" type="text"
-                         class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm
-                                focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition" />
-                </div>
-                <div>
-                  <label class="block text-xs font-semibold text-hplus-text mb-1.5">Source</label>
-                  <select v-model="form.source"
-                          class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm bg-white
-                                 focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition">
-                    <option value="LinkedIn">LinkedIn</option>
-                    <option value="JobsDB">JobsDB</option>
-                    <option value="Referral">Referral</option>
-                    <option value="Manual Entry">Manual Entry</option>
-                    <option value="n8n_scrape">n8n Scrape</option>
-                  </select>
-                </div>
-              </div>
-
-              <!-- LinkedIn URL -->
-              <div>
-                <label class="block text-xs font-semibold text-hplus-text mb-1.5">LinkedIn URL</label>
-                <input v-model="form.linkedin_url" type="url"
-                       class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm
-                              focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition" />
-              </div>
-
-              <!-- Divider -->
-              <div class="border-t border-hplus-border pt-5">
-                <h3 class="text-sm font-bold text-hplus-text mb-4">AI-Extracted Details</h3>
-              </div>
-
-              <!-- Skills -->
-              <div>
-                <label class="block text-xs font-semibold text-hplus-text mb-1.5">Skills</label>
-                <input v-model="form.skills" type="text" placeholder="e.g. Python, React, SQL"
-                       class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm
-                              focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition" />
-              </div>
-
-              <!-- Experience -->
-              <div>
-                <label class="block text-xs font-semibold text-hplus-text mb-1.5">Experience</label>
-                <textarea v-model="form.experience_summary" rows="4"
-                          class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm resize-none
-                                 focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition"></textarea>
-              </div>
-
-              <!-- Education -->
-              <div>
-                <label class="block text-xs font-semibold text-hplus-text mb-1.5">Education</label>
-                <textarea v-model="form.education_summary" rows="3"
-                          class="w-full px-3 py-2.5 rounded-lg border border-hplus-border text-sm resize-none
-                                 focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition"></textarea>
-              </div>
+            <div v-if="result?.criteria" class="flex flex-wrap gap-1.5">
+              <span v-if="result.criteria.position" class="px-2.5 py-1 rounded-md bg-hplus-navy/5 text-hplus-navy text-xs font-medium">{{ result.criteria.position }}</span>
+              <span v-for="s in (result.criteria.must_have_skills || [])" :key="s" class="px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs">{{ s }}</span>
+              <span v-if="result.criteria.location" class="px-2.5 py-1 rounded-md bg-slate-100 text-slate-600 text-xs">📍 {{ result.criteria.location }}</span>
             </div>
-
-            <!-- Action buttons -->
-            <div class="flex items-center gap-3 mt-8 pt-6 border-t border-hplus-border">
-              <button @click="resetForm"
-                      class="flex-1 py-3 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100
-                             hover:bg-slate-200 transition-all duration-200">
-                Cancel
-              </button>
-              <button @click="handleSave" :disabled="saving"
-                      class="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold
-                             bg-hplus-gold text-hplus-navy shadow-md shadow-hplus-gold/25
-                             hover:bg-amber-400 hover:shadow-lg active:scale-[0.98]
-                             disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200">
-                <template v-if="saving">
-                  <div class="flex gap-1.5">
-                    <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
-                    <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
-                    <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
-                  </div>
-                  Saving...
-                </template>
-                <template v-else>
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                  </svg>
-                  Save Candidate to Pipeline
-                </template>
-              </button>
+            <details v-if="result?.queries" class="mt-3">
+              <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-600">AI-generated search queries</summary>
+              <div class="mt-2 space-y-1">
+                <div v-for="(q, src) in result.queries" :key="src" class="text-xs">
+                  <span class="font-semibold text-slate-500">{{ src }}:</span>
+                  <code class="text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded break-all">{{ q }}</code>
+                </div>
+              </div>
+            </details>
+            <div v-if="isPartial" class="mt-3 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠️ AI ranking was unavailable — leads are shown unranked. Check your LLM provider (ANTHROPIC_API_KEY or Ollama).
             </div>
           </div>
 
-          <!-- Raw JSON collapsible -->
-          <details class="mt-4 bg-white rounded-2xl border border-hplus-border shadow-sm">
-            <summary class="px-6 py-3 text-xs font-semibold text-slate-500 cursor-pointer hover:text-hplus-text transition">
-              View Raw Extraction JSON
-            </summary>
-            <pre class="px-6 pb-4 text-xs text-slate-600 overflow-x-auto max-h-64 overflow-y-auto">{{ JSON.stringify(rawJson, null, 2) }}</pre>
-          </details>
+          <!-- Select-all bar -->
+          <div v-if="leads.length" class="flex items-center justify-between px-1 mb-3">
+            <label class="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <input type="checkbox" :checked="allSelected" @change="toggleAll" class="accent-hplus-gold" />
+              Select all
+            </label>
+            <span class="text-xs text-slate-400">{{ selected.size }} selected</span>
+          </div>
+
+          <!-- Lead cards -->
+          <div class="space-y-3">
+            <div v-for="(r, i) in leads" :key="r.profile_url || i"
+                 @click="toggle(i)"
+                 class="bg-white rounded-xl border shadow-sm p-4 cursor-pointer transition-all"
+                 :class="selected.has(i) ? 'border-hplus-gold ring-2 ring-hplus-gold/30' : 'border-hplus-border hover:border-slate-300'">
+              <div class="flex items-start gap-3">
+                <input type="checkbox" :checked="selected.has(i)" @click.stop="toggle(i)" class="mt-1 accent-hplus-gold" />
+
+                <!-- Score -->
+                <div class="flex flex-col items-center w-12 flex-shrink-0">
+                  <span class="text-xl font-bold leading-none" :class="scoreColor(r.match_score)">{{ r.match_score }}</span>
+                  <span class="text-[10px] text-slate-400 mt-0.5">/ 100</span>
+                </div>
+
+                <!-- Body -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <h3 class="text-sm font-bold text-hplus-text truncate">{{ r.full_name }}</h3>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-semibold border" :class="verdictClass(r.verdict)">{{ r.verdict }}</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500">{{ r.source }}</span>
+                  </div>
+                  <p v-if="r.headline" class="text-xs text-slate-500 mt-0.5 line-clamp-2">{{ r.headline }}</p>
+
+                  <ul v-if="r.reasons?.length" class="mt-2 space-y-0.5">
+                    <li v-for="(reason, k) in r.reasons" :key="k" class="text-xs text-emerald-700 flex gap-1.5">
+                      <span class="text-emerald-400">+</span><span>{{ reason }}</span>
+                    </li>
+                  </ul>
+                  <p v-if="r.missing?.length" class="text-xs text-red-400 mt-1">missing: {{ r.missing.join(', ') }}</p>
+
+                  <a v-if="r.profile_url" :href="r.profile_url" target="_blank" @click.stop
+                     class="inline-flex items-center gap-1 text-xs text-hplus-navy hover:underline mt-2">
+                    View profile
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="!leads.length" class="text-center py-12 text-slate-400 text-sm">
+              No candidates found. Try broadening the JD or enabling more sources.
+            </div>
+          </div>
+
+          <!-- Approve bar -->
+          <div v-if="leads.length" class="sticky bottom-4 mt-5 bg-white/85 backdrop-blur rounded-xl border border-hplus-border shadow-lg p-3 space-y-2.5">
+            <!-- Target job picker (required to push) -->
+            <div class="flex items-center gap-2">
+              <label class="text-xs font-semibold text-hplus-text whitespace-nowrap">Push to job</label>
+              <select v-model="selectedJobId"
+                      class="flex-1 px-3 py-2 rounded-lg border text-sm bg-white focus:outline-none focus:ring-2 focus:ring-hplus-gold/40 focus:border-hplus-gold transition"
+                      :class="selectedJobId == null ? 'border-amber-300 bg-amber-50/40' : 'border-hplus-border'">
+                <option :value="null" disabled>— select an open job —</option>
+                <option v-for="j in jobs" :key="j.id" :value="j.id">{{ j.title }}<span v-if="j.department"> · {{ j.department }}</span></option>
+              </select>
+            </div>
+            <p v-if="!jobs.length" class="text-xs text-amber-600">No open jobs found — create one in the tracker first.</p>
+            <p v-else-if="selectedJobId == null" class="text-xs text-amber-600">เลือก job ที่จะ push candidate เข้าก่อนกด Approve</p>
+
+            <button @click="handleApprove" :disabled="selected.size === 0 || approving || selectedJobId == null"
+                    class="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold shadow-lg transition-all
+                           disabled:opacity-50 disabled:cursor-not-allowed bg-hplus-gold text-hplus-navy hover:bg-amber-400 active:scale-[0.99]">
+              <template v-if="approving">
+                <div class="flex gap-1.5">
+                  <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
+                  <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
+                  <div class="w-2 h-2 rounded-full bg-hplus-navy/60 pulse-dot"></div>
+                </div>
+                Pushing…
+              </template>
+              <template v-else>
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                Approve {{ selected.size }} &amp; Push to Pipeline
+              </template>
+            </button>
+          </div>
         </div>
       </Transition>
     </div>
@@ -382,11 +375,8 @@ function showNotification(message) {
     <!-- Toast -->
     <Transition name="fade">
       <div v-if="notification"
-           class="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-xl
-                  border backdrop-blur-sm bg-emerald-50/90 border-emerald-200 text-emerald-700">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-        </svg>
+           class="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-xl border backdrop-blur-sm bg-emerald-50/90 border-emerald-200 text-emerald-700">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
         <span class="text-sm font-medium">{{ notification }}</span>
       </div>
     </Transition>
